@@ -5,12 +5,12 @@ import streamlit as st
 
 st.set_page_config(page_title="Monitor Sísmico Ecuador - Demo 1", layout="wide")
 
-st.title(" Monitor Sísmico - Ecuador (Demo 1)")
+st.title("Monitor Sísmico - Ecuador (Demo 1)")
 st.markdown("Primer prototipo del mapa interactivo de sismos en Ecuador")
 
 # --- CARGAR DATOS ---
 ruta_datos = "data/cat_origen_2012-jul2025.txt"
-df = pd.read_csv(ruta_datos, comment="#", sep="\s+", engine="python")
+df = pd.read_csv(ruta_datos, comment="#", sep=",", engine="python")
 
 # --- LIMPIAR NOMBRES DE COLUMNAS ---
 df.columns = df.columns.str.strip()
@@ -46,7 +46,7 @@ mag_min, mag_max = st.slider(
 df_filtrado = df[df["magnitud"].between(mag_min, mag_max)]
 
 # --- MAPA INTERACTIVO ---
-st.subheader(" Mapa de sismos")
+st.subheader("🗺️ Mapa de sismos")
 mapa = px.scatter_mapbox(
     df_filtrado,
     lat="lat",
