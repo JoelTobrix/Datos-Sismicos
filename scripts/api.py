@@ -51,7 +51,7 @@ def query_sismos(
                     
     return df_filtrado[columnas_api].to_dict(orient='records')
 
-# --- Endpoint Adicional para categorías (Recomendado) ---
+# --- Endpoint  categorías  ---
 @app.get("/sismos/categories")
 def get_categories_count(group_by: str = Query("magnitud", description="Agrupar por 'magnitud' o 'profundidad'")):
     """
@@ -73,3 +73,37 @@ def get_categories_count(group_by: str = Query("magnitud", description="Agrupar 
     df_counts.columns = ['categoria', 'conteo']
 
     return df_counts.to_dict(orient='records')
+
+@app.get("/sismos/region")
+def get_sismos_por_region():
+    """
+    Devuelve el número de sismos agrupados por región o provincia.
+    Si no existe una columna de región, genera agrupación ficticia según latitud.
+    """
+    if df_sismos.empty:
+        return {"error": "Datos no cargados. Verifique el log de la API."}
+
+    # Detectar columna de región si existe
+    posibles_columnas = ['region', 'provincia', 'zona']
+    col_region = next((col for col in posibles_columnas if col in df_sismos.columns), None)
+
+    if col_region:
+        df_region = df_sismos[col_region].value_counts().reset_index()
+        df_region.columns = ['region', 'conteo']
+    else:
+        # Agrupar por latitud aproximada (norte/centro/sur del Ecuador)
+        def clasificar_zona(lat):
+            if lat >= -0.5:
+                return "Norte"
+            elif lat >= -2.5:
+                return "Centro"
+            else:
+                return "Sur"
+
+        df_sismos['zona'] = df_sismos['latitude_value'].apply(clasificar_zona)
+        df_region = df_sismos['zona'].value_counts().reset_index()
+        df_region.columns = ['region', 'conteo']
+
+    
+    return df_region.to_dict(orient='records')
+   

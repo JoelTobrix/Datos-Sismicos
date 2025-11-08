@@ -24,7 +24,7 @@ df["año"] = df["fecha"].dt.year
 def raiz():
     return {"mensaje": "Bienvenido a la API de Sismos del Ecuador"}
 
-@app.get("/sismos")
+@app.get("/sismos/query")
 def obtener_sismos(
     mag_min: float = Query(4.0, description="Magnitud mínima"),
     mag_max: float = Query(7.0, description="Magnitud máxima"),
@@ -34,3 +34,36 @@ def obtener_sismos(
     if año:
         df_filtrado = df_filtrado[df_filtrado["año"] == año]
     return df_filtrado.to_dict(orient="records")
+
+@app.get("/sismos/categories")
+def obtener_categorias(
+group_by: str = Query("magnitud", description="Agrupar por 'magnitud' o 'profundidad'")
+
+):
+     # --- Definir  categorías de magnitud ---
+    bins_magnitud = [0, 2, 4, 5, 6, 7, 8, 10]
+    labels_magnitud = ["Micro", "Menor", "Ligero", "Moderado", "Fuerte", "Mayor", "Gran"]
+    df["categoria_magnitud"] = pd.cut(df["magnitud"], bins=bins_magnitud, labels=labels_magnitud, right=False)
+
+    # --- Definir  categorías de profundidad ---
+    bins_profundidad = [0, 30, 70, 300, 700]
+    labels_profundidad = ["Superficial", "Intermedia", "Profunda", "Muy profunda"]
+    df["categoria_profundidad"] = pd.cut(df["profundidad"], bins=bins_profundidad, labels=labels_profundidad, right=False)
+
+    # --- Determinar  columna a agrupar ---
+    group_col = None
+    if group_by.lower() == "magnitud":
+        group_col = 'categoria_magnitud'
+    elif group_by.lower() == "profundidad":
+        group_col = 'categoria_profundidad'
+    else:
+        return {"error": "Parámetro inválido. Usa 'magnitud' o 'profundidad'."}
+
+    # --- Agrupar y contar ---
+    resumen = df[group_col].value_counts().sort_index()
+
+    return {
+        "tipo_agrupacion": group_by,
+        "resumen": resumen.to_dict()
+    }
+
