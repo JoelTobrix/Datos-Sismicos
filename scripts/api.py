@@ -6,11 +6,10 @@ import os
 app = FastAPI()
 
 # Cargar los datos al iniciar la API
-# Se cambia la ruta para apuntar al archivo PROCESADO (que contiene categorías, etc.)
 RUTA_PROCESADA = os.path.join(os.path.dirname(__file__), "..", "data", "processed_catalogo.csv")
 
 try:
-    # Carga el catálogo PROCESADO y asegura que la columna de tiempo sea datetime
+    # Carga el catálogo PROCESADO 
     df_sismos = pd.read_csv(RUTA_PROCESADA)
     df_sismos['time_value'] = pd.to_datetime(df_sismos['time_value'])
     print("API: Datos procesados cargados exitosamente.")
