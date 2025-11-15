@@ -1,7 +1,7 @@
-# dashboard_app.py
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import os
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Monitor Sísmico Ecuador - Dashboard", layout="wide")
@@ -9,42 +9,81 @@ st.set_page_config(page_title="Monitor Sísmico Ecuador - Dashboard", layout="wi
 st.title("🌋 Monitor Sísmico del Ecuador")
 st.markdown("Visualización interactiva de los sismos registrados entre 2012 y 2025")
 
-# --- CARGAR DATOS ---
-ruta_datos = "data/cat_origen_2012-jul2025.txt"
-df = pd.read_csv(ruta_datos, comment="#", sep=",")
-df.columns = df.columns.str.strip()
+# --- CARGAR DATOS (FUNCIÓN CON CACHÉ) ---
+# Usamos st.cache_data para que esta función solo se ejecute una vez.
+# Esto es crucial para la eficiencia en Streamlit Cloud.
+@st.cache_data
+def load_data():
+    # La ruta DEBE ser relativa a la raíz del repositorio de GitHub.
+    # Si 'data' y 'dashboard_app.py' están en el mismo nivel, esta ruta es correcta.
+    ruta_datos = "data/cat_origen_2012-jul2025.txt"
+    
+    # Verificación de que el archivo exista antes de intentar leerlo
+    if not os.path.exists(ruta_datos):
+        st.error(f"Error: No se encontró el archivo de datos en la ruta esperada: {ruta_datos}. Por favor, verifica que el archivo esté en tu repositorio de GitHub.")
+        return pd.DataFrame() # Retorna un DataFrame vacío para evitar errores
 
-# --- RENOMBRAR COLUMNAS ---
-df = df.rename(columns={
-    'time_value': 'fecha',
-    'latitude_value': 'lat',
-    'longitude_value': 'lon',
-    'depth_value': 'profundidad',
-    'magnitude_value_M': 'magnitud'
-})
+    # Lectura del archivo de datos
+    df = pd.read_csv(ruta_datos, comment="#", sep=",")
+    df.columns = df.columns.str.strip()
 
-# --- CONVERSIÓN DE FECHA ---
-df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
-df["año"] = df["fecha"].dt.year
+    # --- RENOMBRAR COLUMNAS ---
+    df = df.rename(columns={
+        'time_value': 'fecha',
+        'latitude_value': 'lat',
+        'longitude_value': 'lon',
+        'depth_value': 'profundidad',
+        'magnitude_value_M': 'magnitud'
+    })
+
+    # --- CONVERSIÓN DE FECHA ---
+    df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
+    df["año"] = df["fecha"].dt.year
+    
+    # Eliminar filas con valores NaN en columnas críticas después del preprocesamiento
+    df.dropna(subset=['fecha', 'lat', 'lon', 'magnitud', 'profundidad'], inplace=True)
+
+    return df
+
+df = load_data()
+
+# Si el DataFrame está vacío debido al error de archivo, detenemos la ejecución del resto del script
+if df.empty:
+    st.stop()
+
 
 # --- FILTROS LATERALES ---
 st.sidebar.header("Filtros de visualización")
 
+# Aseguramos que haya datos antes de calcular años_disponibles
 años_disponibles = sorted(df["año"].dropna().unique().tolist())
-año_sel = st.sidebar.multiselect("Seleccionar año(s):", años_disponibles, default=años_disponibles[-3:])
+
+# Manejo de años disponibles si la lista está vacía
+default_años = años_disponibles[-3:] if len(años_disponibles) >= 3 else años_disponibles
+if not default_años:
+    default_años = [2024] # Fallback si no hay años en los datos
+
+año_sel = st.sidebar.multiselect("Seleccionar año(s):", años_disponibles, default=default_años)
+
+# Aseguramos que los rangos de slider sean válidos
+min_mag = float(df["magnitud"].min())
+max_mag = float(df["magnitud"].max())
 
 mag_min, mag_max = st.sidebar.slider(
     "Rango de magnitud:",
-    float(df["magnitud"].min()),
-    float(df["magnitud"].max()),
-    (4.0, 7.0)
+    min_mag,
+    max_mag,
+    (min(4.0, max_mag), min(7.0, max_mag)) # Ajustamos el valor por defecto para que no exceda el máximo real
 )
+
+min_prof = float(df["profundidad"].min())
+max_prof = float(df["profundidad"].max())
 
 prof_max = st.sidebar.slider(
     "Profundidad máxima (km):",
-    float(df["profundidad"].min()),
-    float(df["profundidad"].max()),
-    float(df["profundidad"].max())
+    min_prof,
+    max_prof,
+    max_prof
 )
 
 # --- FILTRO DE DATOS ---
@@ -70,59 +109,71 @@ if menu == "🗺️ Mapa de Sismos":
     st.subheader("🗺️ Mapa interactivo de sismos")
     st.write(f"Mostrando **{len(df_filtrado)} sismos** en el rango seleccionado.")
     
-    fig_map = px.scatter_mapbox(
-        df_filtrado,
-        lat="lat",
-        lon="lon",
-        color="magnitud",
-        size="magnitud",
-        color_continuous_scale="hot",
-        zoom=5,
-        mapbox_style="open-street-map",
-        hover_data=["fecha", "magnitud", "profundidad"]
-    )
-    st.plotly_chart(fig_map, use_container_width=True)
+    if not df_filtrado.empty:
+        fig_map = px.scatter_mapbox(
+            df_filtrado,
+            lat="lat",
+            lon="lon",
+            color="magnitud",
+            size="magnitud",
+            color_continuous_scale="hot",
+            zoom=5,
+            mapbox_style="open-street-map",
+            hover_data=["fecha", "magnitud", "profundidad"]
+        )
+        st.plotly_chart(fig_map, use_container_width=True)
+    else:
+        st.warning("No hay sismos para mostrar con los filtros seleccionados.")
 
 # --- GRÁFICO DE BARRAS (POR AÑO) ---
 elif menu == "📊 Sismos por Año":
     st.subheader("📊 Número de sismos por año")
-    conteo = df_filtrado["año"].value_counts().sort_index()
-    
-    fig_bar = px.bar(
-        x=conteo.index,
-        y=conteo.values,
-        labels={"x": "Año", "y": "Número de sismos"},
-        color=conteo.values,
-        color_continuous_scale="Viridis",
-        title="Frecuencia de sismos por año"
-    )
-    st.plotly_chart(fig_bar, use_container_width=True)
+    if not df_filtrado.empty:
+        conteo = df_filtrado["año"].value_counts().sort_index()
+        
+        fig_bar = px.bar(
+            x=conteo.index,
+            y=conteo.values,
+            labels={"x": "Año", "y": "Número de sismos"},
+            color=conteo.values,
+            color_continuous_scale="Viridis",
+            title="Frecuencia de sismos por año"
+        )
+        st.plotly_chart(fig_bar, use_container_width=True)
+    else:
+        st.warning("No hay datos para generar el gráfico con los filtros seleccionados.")
 
 # --- HISTOGRAMA DE MAGNITUDES ---
 elif menu == "📈 Distribución de Magnitudes":
     st.subheader("📈 Distribución de magnitudes sísmicas")
-    fig_hist = px.histogram(
-        df_filtrado,
-        x="magnitud",
-        nbins=25,
-        title="Distribución de magnitudes en el rango seleccionado",
-        color_discrete_sequence=["#FF4B4B"]
-    )
-    st.plotly_chart(fig_hist, use_container_width=True)
+    if not df_filtrado.empty:
+        fig_hist = px.histogram(
+            df_filtrado,
+            x="magnitud",
+            nbins=25,
+            title="Distribución de magnitudes en el rango seleccionado",
+            color_discrete_sequence=["#FF4B4B"]
+        )
+        st.plotly_chart(fig_hist, use_container_width=True)
+    else:
+        st.warning("No hay datos para generar el histograma con los filtros seleccionados.")
 
 # --- RELACIÓN MAGNITUD VS PROFUNDIDAD ---
 elif menu == "📉 Relación Magnitud–Profundidad":
     st.subheader("📉 Relación entre Magnitud y Profundidad")
-    fig_scatter = px.scatter(
-        df_filtrado,
-        x="profundidad",
-        y="magnitud",
-        color="magnitud",
-        color_continuous_scale="Turbo",
-        hover_data=["fecha", "magnitud", "profundidad"],
-        title="Correlación entre magnitud y profundidad"
-    )
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    if not df_filtrado.empty:
+        fig_scatter = px.scatter(
+            df_filtrado,
+            x="profundidad",
+            y="magnitud",
+            color="magnitud",
+            color_continuous_scale="Turbo",
+            hover_data=["fecha", "magnitud", "profundidad"],
+            title="Correlación entre magnitud y profundidad"
+        )
+        st.plotly_chart(fig_scatter, use_container_width=True)
+    else:
+        st.warning("No hay datos para generar el gráfico de dispersión con los filtros seleccionados.")
 
 # --- PIE DE PÁGINA ---
 st.markdown("---")
