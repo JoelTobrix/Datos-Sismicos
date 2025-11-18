@@ -10,12 +10,9 @@ st.title("🌋 Monitor Sísmico del Ecuador")
 st.markdown("Visualización interactiva de los sismos registrados entre 2012 y 2025")
 
 # --- CARGAR DATOS (FUNCIÓN CON CACHÉ) ---
-# Usamos st.cache_data para que esta función solo se ejecute una vez.
-# Esto es crucial para la eficiencia en Streamlit Cloud.
+
 @st.cache_data
 def load_data():
-    # La ruta DEBE ser relativa a la raíz del repositorio de GitHub.
-    # Si 'data' y 'dashboard_app.py' están en el mismo nivel, esta ruta es correcta.
     ruta_datos = "data/cat_origen_2012-jul2025.txt"
     
     # Verificación de que el archivo exista antes de intentar leerlo
@@ -55,7 +52,7 @@ if df.empty:
 # --- FILTROS LATERALES ---
 st.sidebar.header("Filtros de visualización")
 
-# Aseguramos que haya datos antes de calcular años_disponibles
+#  Calcular años_disponibles
 años_disponibles = sorted(df["año"].dropna().unique().tolist())
 
 # Manejo de años disponibles si la lista está vacía
@@ -65,7 +62,7 @@ if not default_años:
 
 año_sel = st.sidebar.multiselect("Seleccionar año(s):", años_disponibles, default=default_años)
 
-# Aseguramos que los rangos de slider sean válidos
+# Verificar si son rangos validos
 min_mag = float(df["magnitud"].min())
 max_mag = float(df["magnitud"].max())
 
@@ -73,7 +70,7 @@ mag_min, mag_max = st.sidebar.slider(
     "Rango de magnitud:",
     min_mag,
     max_mag,
-    (min(4.0, max_mag), min(7.0, max_mag)) # Ajustamos el valor por defecto para que no exceda el máximo real
+    (min(4.0, max_mag), min(7.0, max_mag)) # Ajustar el valor por defecto
 )
 
 min_prof = float(df["profundidad"].min())

@@ -1,108 +1,60 @@
 import pandas as pd
 from fastapi import FastAPI, Query
-from datetime import date
-import os
+import pandas as pd
 
-app = FastAPI()
+app = FastAPI(title="API Sísmica Ecuador", version="1.0")
 
-# Cargar los datos al iniciar la API
-RUTA_PROCESADA = os.path.join(os.path.dirname(__file__), "..", "data", "processed_catalogo.csv")
+# Cargar datos
+ruta_datos = "data/cat_origen_2012-jul2025.txt"
+df = pd.read_csv(ruta_datos, comment="#", sep=",")
 
-try:
-    # Carga el catálogo PROCESADO 
-    df_sismos = pd.read_csv(RUTA_PROCESADA)
-    df_sismos['time_value'] = pd.to_datetime(df_sismos['time_value'])
-    print("API: Datos procesados cargados exitosamente.")
-except FileNotFoundError:
-    print(f"Error: No se encontró el archivo procesado en {RUTA_PROCESADA}.")
-    print("Asegúrate de ejecutar 'python main.py' para generar 'processed_catalogo.csv'.")
-    df_sismos = pd.DataFrame() # Crear un DataFrame vacío para evitar errores
+# --- LIMPIEZA ---
+df.columns = df.columns.str.strip()
+df = df.rename(columns={
+    'time_value': 'fecha',
+    'latitude_value': 'lat',
+    'longitude_value': 'lon',
+    'depth_value': 'profundidad',
+    'magnitude_value_M': 'magnitud'   # ESTA ES LA CORRECTA
+})
 
-# --- Endpoint para consultar sismos ---
+df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
+df["año"] = df["fecha"].dt.year
+df["magnitud"] = pd.to_numeric(df["magnitud"], errors="coerce")
+df["profundidad"] = pd.to_numeric(df["profundidad"], errors="coerce")
+
+@app.get("/")
+def raiz():
+    return {"mensaje": "Bienvenido a la API de Sismos del Ecuador"}
+
 @app.get("/sismos/query")
-def query_sismos(
-    start_date: date = Query(..., description="Fecha de inicio (YYYY-MM-DD)"),
-    end_date: date = Query(..., description="Fecha de fin (YYYY-MM-DD)"),
-    min_magnitude: float = Query(3.5, description="Magnitud mínima")
+def obtener_sismos(
+    mag_min: float = Query(3.5, description="Magnitud mínima"),
+    mag_max: float = Query(8.0, description="Magnitud máxima"),
+    año: int = Query(None, description="Año específico (opcional)")
 ):
-    """
-    Filtra los sismos por rango de fechas y magnitud mínima.
-    """
-    if df_sismos.empty:
-        return {"error": "Datos no cargados. Verifique el log de la API."}
+    dff = df[df["magnitud"].between(mag_min, mag_max)]
+    if año:
+        dff = dff[dff["año"] == año]
+    return dff.to_dict(orient="records")
 
-    # Convertir los parámetros a datetime
-    # Se usa .value para obtener el valor de la fecha del objeto date de Python
-    start_dt = pd.to_datetime(start_date)
-    end_dt = pd.to_datetime(end_date)
-
-    # Filtrar por fechas y magnitud
-    filtro_fecha = (df_sismos['time_value'] >= start_dt) & (df_sismos['time_value'] <= end_dt)
-    filtro_magnitud = df_sismos['magnitude_value_P'] >= min_magnitude
-
-    # Aplicar filtros
-    df_filtrado = df_sismos[filtro_fecha & filtro_magnitud]
-
-    # Devolver resultados como JSON
-    # Se limita el número de columnas para una respuesta más ligera (opcional)
-    columnas_api = ['event', 'time_value', 'latitude_value', 'longitude_value', 
-                    'depth_value', 'magnitude_value_P', 'categoria_magnitud', 'categoria_profundidad']
-                    
-    return df_filtrado[columnas_api].to_dict(orient='records')
-
-# --- Endpoint  categorías  ---
 @app.get("/sismos/categories")
-def get_categories_count(group_by: str = Query("magnitud", description="Agrupar por 'magnitud' o 'profundidad'")):
-    """
-    Devuelve la frecuencia de sismos por la categoría especificada.
-    """
-    if df_sismos.empty:
-        return {"error": "Datos no cargados. Verifique el log de la API."}
-        
-    group_col = None
-    if group_by.lower() == "magnitud":
-        group_col = 'categoria_magnitud'
-    elif group_by.lower() == "profundidad":
-        group_col = 'categoria_profundidad'
+def obtener_categorias(
+    group_by: str = Query("magnitud", description="Agrupar por 'magnitud' o 'profundidad'")
+):
+    # Categorías de magnitud
+    bins_magnitud = [0, 2, 4, 5, 6, 7, 8, 10]
+    labels_magnitud = ["Micro", "Menor", "Ligero", "Moderado", "Fuerte", "Mayor", "Gran"]
+    df["cat_mag"] = pd.cut(df["magnitud"], bins=bins_magnitud, labels=labels_magnitud, right=False)
+
+    # Categorías de profundidad
+    bins_profundidad = [0, 30, 70, 300, 700]
+    labels_profundidad = ["Superficial", "Intermedia", "Profunda", "Muy profunda"]
+    df["cat_prof"] = pd.cut(df["profundidad"], bins=bins_profundidad, labels=labels_profundidad, right=False)
+
+    if group_by == "magnitud":
+        resumen = df["cat_mag"].value_counts().sort_index()
     else:
-        return {"error": "Parámetro 'group_by' inválido. Use 'magnitud' o 'profundidad'."}
+        resumen = df["cat_prof"].value_counts().sort_index()
 
-    # Calcular la frecuencia de cada categoría
-    df_counts = df_sismos[group_col].value_counts().reset_index()
-    df_counts.columns = ['categoria', 'conteo']
-
-    return df_counts.to_dict(orient='records')
-
-@app.get("/sismos/region")
-def get_sismos_por_region():
-    """
-    Devuelve el número de sismos agrupados por región o provincia.
-    Si no existe una columna de región, genera agrupación ficticia según latitud.
-    """
-    if df_sismos.empty:
-        return {"error": "Datos no cargados. Verifique el log de la API."}
-
-    # Detectar columna de región si existe
-    posibles_columnas = ['region', 'provincia', 'zona']
-    col_region = next((col for col in posibles_columnas if col in df_sismos.columns), None)
-
-    if col_region:
-        df_region = df_sismos[col_region].value_counts().reset_index()
-        df_region.columns = ['region', 'conteo']
-    else:
-        # Agrupar por latitud aproximada (norte/centro/sur del Ecuador)
-        def clasificar_zona(lat):
-            if lat >= -0.5:
-                return "Norte"
-            elif lat >= -2.5:
-                return "Centro"
-            else:
-                return "Sur"
-
-        df_sismos['zona'] = df_sismos['latitude_value'].apply(clasificar_zona)
-        df_region = df_sismos['zona'].value_counts().reset_index()
-        df_region.columns = ['region', 'conteo']
-
-    
-    return df_region.to_dict(orient='records')
-   
+    return {"grupo": group_by, "resumen": resumen.to_dict()}
